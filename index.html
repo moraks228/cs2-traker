@@ -46,9 +46,7 @@
   <div class="grid" id="itemsGrid"></div>
 
   <script>
-    const PROXIES = [
-      url => https://steam-proxy.nepesovdavut6.workers.dev/,
-    ];
+    const MY_PROXY = "https://workers.dev";
     let total = 0;
 
     window.onload = () => {
@@ -56,22 +54,13 @@
       if (savedId) document.getElementById("steamIdInput").value = savedId;
     };
 
-    async function fetchWithFallback(targetUrl) {
-      let lastError = "";
-      for (let i = 0; i < PROXIES.length; i++) {
-        try {
-          const res = await fetch(PROXIES[i](targetUrl));
-          if (!res.ok) {
-            lastError = `Код ответа сервера: ${res.status}`;
-            continue;
-          }
-          const text = await res.text();
-          return JSON.parse(text);
-        } catch (e) {
-          lastError = e.message;
-        }
+    async function fetchSteam(targetUrl) {
+      const res = await fetch(MY_PROXY + encodeURIComponent(targetUrl));
+      if (!res.ok) {
+        throw new Error(`Ошибка сервера (${res.status}). Проверьте настройки приватности Steam.`);
       }
-      throw new Error(`Ошибка сети (${lastError}). Попробуйте открыть через обычный браузер.`);
+      const text = await res.text();
+      return JSON.parse(text);
     }
 
     async function loadInventory() {
@@ -91,27 +80,27 @@
       setStatus("Подключаемся к серверам Steam...");
 
       try {
-        const invUrl = `https://steamcommunity.com{steamId}/730/2?l=english&count=75`;
-        const data = await fetchWithFallback(invUrl);
+        const invUrl = "https://steamcommunity.com" + steamId + "/730/2?l=english&count=100";
+        const data = await fetchSteam(invUrl);
 
         if (!data || !data.assets || !data.descriptions) {
-          setStatus("Steam вернул пустой ответ. Убедитесь, что инвентарь открыт в настройках приватности!");
+          setStatus("Steam вернул пустой ответ. Убедитесь, что инвентарь открыт!");
           btn.disabled = false;
           return;
         }
 
         const descMap = {};
         data.descriptions.forEach(d => {
-          descMap[`${d.classid}_${d.instanceid}`] = d;
+          descMap[d.classid + "_" + d.instanceid] = d;
         });
 
         const items = [];
         data.assets.forEach(a => {
-          const info = descMap[`${a.classid}_${a.instanceid}`];
+          const info = descMap[a.classid + "_" + a.instanceid];
           if (info && info.marketable === 1) {
             items.push({
               name: info.market_hash_name,
-              icon: `https://steamstatic.com{info.icon_url}`
+              icon: "https://steamstatic.com" + info.icon_url
             });
           }
         });
@@ -122,7 +111,7 @@
           return;
         }
 
-        setStatus(`Найдено предметов: ${items.length}. Загружаем цены...`);
+        setStatus("Найдено предметов: " + items.length + ". Загружаем цены...");
 
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
@@ -132,7 +121,7 @@
           const price = await fetchPrice(item.name);
           const priceEl = card.querySelector(".item-price");
           if (price !== null) {
-            priceEl.textContent = `$${price.toFixed(2)}`;
+            priceEl.textContent = "$" + price.toFixed(2);
             updateTotal(price);
           } else {
             priceEl.textContent = "Нет цены";
@@ -158,8 +147,8 @@
       }
 
       try {
-        const priceUrl = `https://steamcommunity.com{encodeURIComponent(marketHashName)}`;
-        const data = await fetchWithFallback(priceUrl);
+        const priceUrl = "https://steamcommunity.com" + encodeURIComponent(marketHashName);
+        const data = await fetchSteam(priceUrl);
         if (data && data.success && data.lowest_price) {
           const num = parseFloat(data.lowest_price.replace(/[^0-9.]/g, ""));
           localStorage.setItem(cacheKey, JSON.stringify({ price: num, time: Date.now() }));
@@ -172,17 +161,13 @@
     function createCard(item) {
       const div = document.createElement("div");
       div.className = "item";
-      div.innerHTML = `
-        <img src="${item.icon}" alt="">
-        <div class="item-name">${item.name}</div>
-        <div class="item-price">...</div>
-      `;
+      div.innerHTML = '<img src="' + item.icon + '" alt=""><div class="item-name">' + item.name + '</div><div class="item-price">...</div>';
       return div;
     }
 
     function updateTotal(add) {
       total += add;
-      document.getElementById("totalValue").textContent = `$${total.toFixed(2)}`;
+      document.getElementById("totalValue").textContent = "$" + total.toFixed(2);
     }
 
     function setStatus(text) {
