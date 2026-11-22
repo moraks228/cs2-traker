@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>CS2 Skin Tracker</title>
+  <meta name="theme-color" content="#0f1115">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #0f1115; color: #ffffff; padding: 16px; padding-bottom: 50px; }
+    .header { text-align: center; margin-bottom: 20px; }
+    .header h1 { font-size: 20px; color: #8b949e; font-weight: 500; }
+    .balance-card { background: linear-gradient(135deg, #1c2128, #161b22); border: 1px solid #30363d; border-radius: 16px; padding: 20px; text-align: center; margin-bottom: 20px; }
+    .balance-label { font-size: 13px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
+    .balance-value { font-size: 36px; font-weight: 700; color: #3fb950; margin-top: 6px; }
+    .input-group { display: flex; gap: 8px; margin-bottom: 16px; }
+    input { flex: 1; background: #161b22; border: 1px solid #30363d; color: #fff; padding: 12px 14px; border-radius: 12px; font-size: 15px; outline: none; }
+    input:focus { border-color: #58a6ff; }
+    button { background: #238636; color: #fff; border: none; padding: 0 20px; border-radius: 12px; font-weight: 600; font-size: 15px; cursor: pointer; }
+    button:disabled { background: #21262d; color: #8b949e; }
+    .status { text-align: center; font-size: 13px; color: #8b949e; margin-bottom: 16px; min-height: 18px; line-height: 1.4; }
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .item { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; }
+    .item img { width: 100%; height: 90px; object-fit: contain; margin-bottom: 8px; }
+    .item-name { font-size: 12px; color: #c9d1d9; line-height: 1.3; margin-bottom: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .item-price { font-size: 15px; font-weight: 700; color: #58a6ff; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>CS2 Inventory Tracker</h1>
+  </div>
+
+  <div class="balance-card">
+    <div class="balance-label">Общая стоимость</div>
+    <div class="balance-value" id="totalValue">$0.00</div>
+  </div>
+
+  <div class="input-group">
+    <input type="text" id="steamIdInput" placeholder="Вставьте SteamID64 (17 цифр)">
+    <button id="loadBtn" onclick="loadInventory()">Найти</button>
+  </div>
+
+  <div class="status" id="statusText">Инвентарь в Steam должен быть открытым</div>
+  <div class="grid" id="itemsGrid"></div>
+
+  <script>
+    const PROXIES = [
+      url => `https://allorigins.win{encodeURIComponent(url)}`,
+      url => `https://corsproxy.io{encodeURIComponent(url)}`,
+      url => `https://codetabs.com{encodeURIComponent(url)}`
+    ];
+    let total = 0;
+
+    window.onload = () => {
+      const savedId = localStorage.getItem("cs2_steam_id");
+      if (savedId) document.getElementById("steamIdInput").value = savedId;
+    };
+
+    async function fetchWithFallback(targetUrl) {
+      let lastError = "";
+      for (let i = 0; i < PROXIES.length; i++) {
+        try {
+          const res = await fetch(PROXIES[i](targetUrl));
+          if (!res.ok) {
+            lastError = `Код ответа сервера: ${res.status}`;
+            continue;
+          }
+          const text = await res.text();
+          return JSON.parse(text);
+        } catch (e) {
+          lastError = e.message;
+        }
+      }
+      throw new Error(`Ошибка сети (${lastError}). Попробуйте открыть через обычный браузер.`);
+    }
+
+    async function loadInventory() {
+      const steamId = document.getElementById("steamIdInput").value.trim();
+      if (!/^\d{17}$/.test(steamId)) {
+        setStatus("Ошибка: нужен цифровой SteamID64 (17 цифр)");
+        return;
+      }
+
+      localStorage.setItem("cs2_steam_id", steamId);
+      const btn = document.getElementById("loadBtn");
+      const grid = document.getElementById("itemsGrid");
+      btn.disabled = true;
+      grid.innerHTML = "";
+      total = 0;
+      updateTotal(0);
+      setStatus("Подключаемся к серверам Steam...");
+
+      try {
+        const invUrl = `https://steamcommunity.com{steamId}/730/2?l=english&count=75`;
+        const data = await fetchWithFallback(invUrl);
+
+        if (!data || !data.assets || !data.descriptions) {
+          setStatus("Steam вернул пустой ответ. Убедитесь, что инвентарь открыт в настройках приватности!");
+          btn.disabled = false;
+          return;
+        }
+
+        const descMap = {};
+        data.descriptions.forEach(d => {
+          descMap[`${d.classid}_${d.instanceid}`] = d;
+        });
+
+        const items = [];
+        data.assets.forEach(a => {
+          const info = descMap[`${a.classid}_${a.instanceid}`];
+          if (info && info.marketable === 1) {
+            items.push({
+              name: info.market_hash_name,
+              icon: `https://steamstatic.com{info.icon_url}`
+            });
+          }
+        });
+
+        if (items.length === 0) {
+          setStatus("В инвентаре нет предметов, доступных для продажи на ТП.");
+          btn.disabled = false;
+          return;
+        }
+
+        setStatus(`Найдено предметов: ${items.length}. Загружаем цены...`);
+
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          const card = createCard(item);
+          grid.appendChild(card);
+
+          const price = await fetchPrice(item.name);
+          const priceEl = card.querySelector(".item-price");
+          if (price !== null) {
+            priceEl.textContent = `$${price.toFixed(2)}`;
+            updateTotal(price);
+          } else {
+            priceEl.textContent = "Нет цены";
+            priceEl.style.color = "#8b949e";
+          }
+
+          await new Promise(r => setTimeout(r, 1200));
+        }
+
+        setStatus("Готово! Все цены обновлены.");
+      } catch (err) {
+        setStatus(err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function fetchPrice(marketHashName) {
+      const cacheKey = "price_" + marketHashName;
+      const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+      if (cached && (Date.now() - cached.time < 3600000)) {
+        return cached.price;
+      }
+
+      try {
+        const priceUrl = `https://steamcommunity.com{encodeURIComponent(marketHashName)}`;
+        const data = await fetchWithFallback(priceUrl);
+        if (data && data.success && data.lowest_price) {
+          const num = parseFloat(data.lowest_price.replace(/[^0-9.]/g, ""));
+          localStorage.setItem(cacheKey, JSON.stringify({ price: num, time: Date.now() }));
+          return num;
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    function createCard(item) {
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `
+        <img src="${item.icon}" alt="">
+        <div class="item-name">${item.name}</div>
+        <div class="item-price">...</div>
+      `;
+      return div;
+    }
+
+    function updateTotal(add) {
+      total += add;
+      document.getElementById("totalValue").textContent = `$${total.toFixed(2)}`;
+    }
+
+    function setStatus(text) {
+      document.getElementById("statusText").textContent = text;
+    }
+  </script>
+</body>
+</html>
